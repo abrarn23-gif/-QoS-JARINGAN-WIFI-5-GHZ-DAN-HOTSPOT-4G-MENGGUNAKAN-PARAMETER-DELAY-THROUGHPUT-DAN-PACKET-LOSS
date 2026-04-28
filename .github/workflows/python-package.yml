@@ -1,40 +1,94 @@
-# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
-
-name: Python package
+name: 🐍 Python CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "develop" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "develop" ]
+  workflow_dispatch:  # Manual trigger! 🎮
 
 jobs:
-  build:
-
+  quality-gate:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11"]
+        python-version: [3.9, 3.10, 3.11, '3.12-dev']  # Latest! 🔥
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history untuk coverage
+
+    - name: 🐍 Setup Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5  # Latest version
+      id: python
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
+        cache: 'pip'  # Cache dependencies 💨
+
+    - name: 📦 Install Dependencies
       run: |
-        python -m pip install --upgrade pip
-        python -m pip install flake8 pytest
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Lint with flake8
+        python -m pip install --upgrade pip setuptools wheel
+        pip install -r requirements.txt -r requirements-dev.txt || pip install flake8 pytest pytest-cov ruff mypy black
+        pip install -e .[dev]  # Editable install
+
+    - name: 🎨 Auto-format with Black
       run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-    - name: Test with pytest
+        black . --check --diff || echo "🖌️ Code needs formatting!"
+
+    - name: 🔍 Modern Lint with Ruff (faster than flake8!)
       run: |
-        pytest
+        ruff check . --output-format=github
+        ruff format --check .
+
+    - name: 📊 Type Checking with Mypy
+      run: |
+        mypy src/ tests/ --install-types --non-interactive
+
+    - name: 🧪 Run Tests with Coverage
+      run: |
+        pytest tests/ \
+          -v \
+          --cov=src/ \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --cov-fail-under=85  # Min 85% coverage! 📈
+
+    - name: 📊 Upload Coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+    - name: 🏗️ Build Package
+      run: |
+        python -m build --sdist --wheel
+
+    - name: 📦 Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: dist-${{ matrix.python-version }}
+        path: dist/*
+
+    - name: 🔐 Security Scan
+      uses: pre-commit/action@v3.0.1
+      with:
+        extra_args: bandit -r src/
+
+  # Bonus: Deploy job (uncomment untuk production)
+  # deploy:
+  #   needs: quality-gate
+  #   if: github.ref == 'refs/heads/main'
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Deploy to PyPI
+  #       env:
+  #         TWINE_USERNAME: __token__
+  #         TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+  #       run: |
+  #         pip install twine build
+  #         twine upload dist/*
